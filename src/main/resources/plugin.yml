@@ -1,0 +1,50 @@
+name: SSCustomItems
+version: '${project.version}'
+main: com.sscustomitems.SSCustomItemsPlugin
+api-version: '26.2'
+description: 通过 JSON 配置新增自定义物品与战斗指令
+author: Mc_SomSo
+
+commands:
+  ci:
+    description: 自定义物品指令
+    usage: /ci give <命名空间:物品名>
+  damagelook:
+    description: 精准伤害视角所指实体
+    usage: /damagelook <伤害类型> [最大距离] [散布范围] [弹道下坠] [伤害大小]
+  firelook:
+    description: 精准点燃视角所指实体
+    usage: /firelook <燃烧秒数> [最大距离] [散布范围] [弹道下坠]
+  damageln:
+    description: 伤害视角所指点位半径内的实体
+    usage: /damageln <伤害类型> <半径> [散布范围] [弹道下坠] [伤害大小]
+  fireln:
+    description: 点燃视角所指点位半径内的实体
+    usage: /fireln <燃烧秒数> <半径> [散布范围] [弹道下坠]
+  killlook:
+    description: 直接清除视角所指实体
+    usage: /killlook [最大距离] [散布范围] [弹道下坠]
+  killln:
+    description: 直接清除视角所指点位半径内的实体
+    usage: /killln <半径> [散布范围] [弹道下坠]
+  cb:
+    description: 自定义方块指令
+    usage: /cb place <命名空间:id> 或 /cb give <命名空间:id>
+  sscustomitems:
+    description: 插件管理指令（热重载）
+    usage: /sscustomitems reload <all|items|damagetypes|blocks|config>
+    aliases: [ssci]
+
+permissions:
+  sscustomitems.give:
+    description: 允许使用 /ci give 获取自定义物品
+    default: op
+  sscustomitems.combat:
+    description: 允许使用 damagelook / firelook / damageln / fireln / killlook / killln
+    default: op
+  sscustomitems.block:
+    description: 允许使用 /cb place 与 /cb give
+    default: op
+  sscustomitems.reload:
+    description: 允许使用 /sscustomitems reload 热重载配置
+    default: op

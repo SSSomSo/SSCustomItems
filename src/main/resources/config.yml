@@ -1,0 +1,28 @@
+# 状态检测周期（刻，20 刻 = 1 秒）：越小，切换主副手、穿戴装备的检测越灵敏，开销越大
+check-interval-ticks: 5
+
+# inxxx 类持续触发（inmainhand / inoffhand / inhelmet / inchestplate / inleggings / inboots）的执行间隔（刻）
+repeat-interval-ticks: 20
+
+# 自定义死亡消息使用的语言（对应伤害类型 json 中 translate 下的键，如 zh_CN / en_us）
+language: zh_CN
+
+# 战斗指令（damagelook / firelook / damageln / fireln）的默认参数
+combat:
+  # 最大命中距离（格）
+  max-distance: 64.0
+  # 散布范围（格，相对于视角：在最大距离处，落点随机偏移的半径，0 = 无散布）
+  spread: 0.0
+  # 弹道下坠（每“tick”向下的加速度，格/tick²）：0 = 直线；0.03 ≈ 雪球/鸡蛋；0.05 ≈ 原版箭矢；0.1 = 明显抛物线
+  projectile-drop: 0.05
+  # /damageln、/fireln 的默认影响半径（格）
+  ln-radius: 3.0
+  # /firelook、/fireln 默认燃烧时间（秒）
+  burn-seconds: 5
+  # 伤害数值（默认 1000，足以秒杀；可按需改小）
+  damage-amount: 1000.0
+  # 射线判定粗细（格）
+  ray-size: 0.2
+
+# 自定义方块 tick 事件的执行间隔（刻，20 刻 = 1 秒；越小越接近每 tick 触发，开销越大）
+block-tick-interval-ticks: 10
