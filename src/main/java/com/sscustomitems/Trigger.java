@@ -1,5 +1,12 @@
 package com.sscustomitems;
 
+/**
+ * 支持的全部触发类型。
+ *
+ * slot 为 null 的（点击类）由事件直接触发；
+ * continuous=true 的 in* 类在物品处于对应位置时按配置间隔反复执行，
+ * 其余为状态变化时触发一次。
+ */
 public enum Trigger {
 
     MAINHAND(SlotType.MAIN_HAND, false),
@@ -27,9 +34,20 @@ public enum Trigger {
         this.continuous = continuous;
     }
 
-    public SlotType slot() { return slot; }
-    public boolean continuous() { return continuous; }
+    public SlotType slot() {
+        return slot;
+    }
 
+    public boolean continuous() {
+        return continuous;
+    }
+
+    /**
+     * 把规范化后的路径片段解析成 Trigger，无法识别返回 null。
+     * 支持：offhand/mainhand/inoffhand/inmainhand/leftclick/rightclick、
+     * wear.helmet（chestplate/leggings/boots）、
+     * inhelmet/inchestplate/inleggings/inboots。
+     */
     public static Trigger fromPath(java.util.List<String> segments) {
         if (segments.size() == 1) {
             return switch (segments.get(0)) {

@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+/**
+ * /ci give <命名空间:物品名>
+ */
 public final class CiCommand implements CommandExecutor, TabCompleter {
 
     private static final String PERMISSION = "sscustomitems.give";

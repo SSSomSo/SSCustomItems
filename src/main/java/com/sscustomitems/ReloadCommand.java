@@ -13,6 +13,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * /sscustomitems reload [all|items|damagetypes|blocks|config]
+ * 别名 /ssci。在线热重载，无需重启。
+ */
 public final class ReloadCommand implements CommandExecutor, TabCompleter {
 
     public static final List<String> TARGETS =

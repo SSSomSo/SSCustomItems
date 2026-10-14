@@ -16,6 +16,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * /cb place <命名空间:id>：在视角所指方块面上放置自定义方块；
+ * /cb give <命名空间:id>：给予带标记的载体物品（可正常放置）。
+ */
 public final class BlockCommand implements CommandExecutor, TabCompleter {
 
     private static final String PERMISSION = "sscustomitems.block";
@@ -40,7 +44,8 @@ public final class BlockCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         if (args.length != 2 || !(args[0].equals("place") || args[0].equals("give"))) {
-            sender.sendMessage(Component.text("用法: /cb place <命名空间:id> 或 /cb give <命名空间:id>", NamedTextColor.YELLOW));
+            sender.sendMessage(Component.text("用法: /cb place <命名空间:id> 或 /cb give <命名空间:id>",
+                    NamedTextColor.YELLOW));
             return true;
         }
 
@@ -58,6 +63,7 @@ public final class BlockCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
+        // place
         RayTraceResult result = player.rayTraceBlocks(REACH);
         if (result == null || result.getHitBlock() == null || result.getHitBlockFace() == null) {
             sender.sendMessage(Component.text("视角未指向任何方块。", NamedTextColor.YELLOW));
@@ -76,8 +82,9 @@ public final class BlockCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        try { blockManager.placeBlock(player, def, target); }
-        catch (IllegalStateException e) {
+        try {
+            blockManager.placeBlock(player, def, target);
+        } catch (IllegalStateException e) {
             sender.sendMessage(Component.text("放置失败: " + e.getMessage(), NamedTextColor.RED));
             return true;
         }
@@ -86,18 +93,28 @@ public final class BlockCommand implements CommandExecutor, TabCompleter {
     }
 
     @Override
-    public List<String> onTabComplete(CommandSender sender, Command command, String label, String[] args) {
-        if (!sender.hasPermission(PERMISSION)) return List.of();
-        if (args.length == 1) return filterPrefix(List.of("place", "give"), args[0]);
-        if (args.length == 2) return filterPrefix(blockManager.definitionIds(), args[1]);
+    public List<String> onTabComplete(CommandSender sender, Command command,
+                                      String label, String[] args) {
+        if (!sender.hasPermission(PERMISSION)) {
+            return List.of();
+        }
+        if (args.length == 1) {
+            return filterPrefix(List.of("place", "give"), args[0]);
+        }
+        if (args.length == 2) {
+            return filterPrefix(blockManager.definitionIds(), args[1]);
+        }
         return List.of();
     }
 
     private static List<String> filterPrefix(List<String> options, String prefix) {
         String normalized = prefix.toLowerCase(Locale.ROOT);
         List<String> result = new ArrayList<>();
-        for (String option : options)
-            if (option.toLowerCase(Locale.ROOT).startsWith(normalized)) result.add(option);
+        for (String option : options) {
+            if (option.toLowerCase(Locale.ROOT).startsWith(normalized)) {
+                result.add(option);
+            }
+        }
         return result;
     }
 }

@@ -1,44 +1,25 @@
 package com.sscustomitems.combat;
 
-import net.kyori.adventure.text.Component;
+import java.util.Map;
 
-import java.util.Locale;
+/**
+ * 自定义伤害类型：实际伤害仍通过 baseType（原版伤害类型）结算，
+ * 死亡时使用 messages 中对应语言/场景的文本覆盖死亡消息。
+ *
+ * 场景：byplayer（被玩家杀死）、byentity（因实体死亡）、bynature（自然死亡）。
+ */
+public record CustomDamageType(String typeId,
+                               String baseType,
+                               Map<String, Map<String, String>> messages) {
 
-public final class CustomDamageType {
-
-    private final String typeId;
-    private final String baseType;
-    private final String byPlayer;
-    private final String byEntity;
-    private final String byNature;
-
-    public CustomDamageType(String typeId, String baseType,
-                            String byPlayer, String byEntity, String byNature) {
-        this.typeId = typeId;
-        this.baseType = baseType != null ? baseType : "minecraft:player_attack";
-        this.byPlayer = byPlayer;
-        this.byEntity = byEntity;
-        this.byNature = byNature;
-    }
-
-    public String typeId() { return typeId; }
-    public String baseType() { return baseType; }
-
-    public Component deathMessage(String victim, String killer, String entityName) {
-        String template;
-        if (killer != null && byPlayer != null) template = byPlayer;
-        else if (entityName != null && byEntity != null) template = byEntity;
-        else if (byNature != null) template = byNature;
-        else return Component.text(victim + " 死了");
-        String text = template.replace("<PLAYER>", victim)
-                .replace("<PLAYER1>", victim)
-                .replace("<PLAYER2>", killer != null ? killer : "")
-                .replace("<ENTITY>", entityName != null ? entityName : "");
-        return Component.text(text);
-    }
-
-    public static String normalize(String id) {
-        String value = id.toLowerCase(Locale.ROOT);
-        return value.contains(":") ? value : "minecraft:" + value;
+    public String message(String language, String scenario) {
+        Map<String, String> map = messages.get(language);
+        if (map == null) {
+            map = messages.get("en_us");
+        }
+        if (map == null && !messages.isEmpty()) {
+            map = messages.values().iterator().next();
+        }
+        return map == null ? null : map.get(scenario);
     }
 }
