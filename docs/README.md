@@ -36,6 +36,7 @@
 | `/killlook [最大距离] [散布范围] [弹道下坠]`                 | 直接清除视角所指实体（等同原版 /kill 结算） | `sscustomitems.combat`（默认 OP） |
 | `/killln <半径> [散布范围] [弹道下坠]`                     | 直接清除视角所指点位半径内的实体          | 同上                            |
 | `/sscustomitems reload <目标>`（别名 `/ssci`）         | 在线热重载，无需重启                | `sscustomitems.reload`（默认 OP） |
+| `/ssci save <文件名> <命名空间:id>`                   | 把主手物品快速保存为自定义物品并热重载          | `sscustomitems.reload`（默认 OP） |
 
 `/ci give`、`/damagelook`、`/damageln` 的伤害类型参数，以及 `/cb` 的方块 id 参数均支持 Tab 补全。
 
@@ -67,6 +68,20 @@
 
 * 更新 **jar 文件本身**仍需完整重启（或 PlugManX 加载新 jar），热重载只针对配置内容。
 
+## 快速保存手中物品
+
+把主手上拿着的物品（含全部数据组件）一键转存为 SSCI 自定义物品配置：
+
+```
+/ssci save <文件名> <命名空间:id>
+```
+
+* 会在 `plugins/SSCustomItems/items/` 下生成 `<文件名>.json`，`vanilla_id` 自动取主手物品类型，`components` 从物品实际数据组件完整还原（带类型后缀的数值如 `1b`、`1.5d` 会原样保留，再次给予时类型不丢失）。
+* 文件名可带可不带 `.json`，路径分隔符与非法字符会被自动清洗。
+* 保存后立即热重载物品，新物品马上可用 `/ci give` 取出。
+* 物品若带 `item_model` 组件会被一并保存，不会被 `enable_model` 覆盖。
+
+
 ## 物品配置格式
 
 在 `plugins/SSCustomItems/items/` 下新建任意 `xxx.json` 文件（文件名即物品名，仅用于识别）：
@@ -96,6 +111,7 @@
 | `id`           | 是  | 自定义物品 id，格式 `命名空间:名称`，`/ci give` 时使用            |
 | `enable_model` | 否  | 为 `true` 时，给予的物品自动附带 `item_model` 数据组件，值就是 `id` |
 | `components`   | 否  | 原版物品数据组件，写法与原版 `components` 一致                  |
+| `random`       | 否  | 随机变体 + 随机数占位符，**可替代 `components`**，见下          |
 | `handed`       | 否  | 物品触发动作，见下                                       |
 
 实际给予物品时，等价于原版 SNBT：
@@ -105,6 +121,44 @@
 ```
 {count:1b, id:"minecraft:paper", components:{minecraft:item_model:"sscustomitems:ruby", ...}}
 ```
+
+## 随机物品（random）
+
+在物品 json 顶层写 `random`（与 `components` 平级，可替代它）。`/ci give` 时会从 `variants` 中**随机选一套**作为给予物品的组件，并把字符串里的 `<random_三位数字>` 占位符替换成按规则生成的随机数：
+
+```
+{
+  "vanilla_id": "minecraft:paper",
+  "id": "sscustomitems:lucky_ticket",
+  "random": {
+    "random_rules": [
+      { "id": 1, "type": "double",  "min": 1, "max": 10 },
+      { "id": 2, "type": "integer", "min": 1, "max": 100 }
+    ],
+    "variants": [
+      { "minecraft:item_model": "sscustomitems:ticket_a" },
+      {
+        "minecraft:item_model": "sscustomitems:ticket_b",
+        "minecraft:custom_name": { "text": "编号 <random_002>", "color": "aqua" },
+        "minecraft:custom_data": { "weight": "<random_001>" }
+      }
+    ]
+  }
+}
+```
+
+| 写法 | 说明 |
+| ---- | ---- |
+| `random.random_rules[]` | 随机数规则：`id`（三位数字，对应占位符）、`type`（`int`/`integer` 走整数，其余为 `double`）、`min`、`max` |
+| `random.variants[]` | 每套是一份组件，给予时等概率随机抽一套（键名也兼容写成 `components`） |
+| `random: [ {...}, {...} ]` | 直接把 `random` 写成数组，等价于只有 `variants`（无随机数规则） |
+
+占位符规则：
+
+* `<random_###>`（`###` 为恰好三位规则 id）写在任意组件字符串里；
+* 字符串**整体就是一个占位符**时，替换后该值成为真正的数字（整数→int、小数→double），可用于 `custom_data`、`custom_model_data` 等数值字段；
+* 占位符嵌在文本中（如 `"编号 <random_002>"`）时，替换为数字文本。
+* 没有 `variants` 时，使用顶层 `components` 作为模板，仅做随机数替换。
 
 ## 物品触发动作（handed）
 
@@ -350,20 +404,71 @@
 
 * **破坏的默认行为**（即使不写 `break`）：返还 1 个带标记的载体物品；若该原版方块没有物品形式则不返还。用返还物品重新放置会自动恢复为自定义方块。爆炸、活塞移动也做了相应处理（活塞会被取消推动）。
 
-chest\_menu 配置（四个开关互斥，按以下优先级判定）：
+chest\_menu 配置（开关按以下优先级判定）：
 
 
 
 | 开关              | 效果                                           |
 | --------------- | -------------------------------------------- |
 | `ischest`       | 右键直接打开 27 格箱子界面（无需再写 rightclick），破坏后返还载体物品   |
-| `isbig`         | 需 `ischest: true`，打开 54 格大箱子界面               |
-| `isender`       | 与上述冲突，右键直接打开该玩家的末影箱物品栏                       |
-| `isshulkerbox`  | 与上述冲突，打开 27 格界面；**破坏后物品保留全部内容物数据**，重新放置后内容还在 |
+| `isbig`         | 配合 `ischest` 打开 54 格大箱子；**配合 `isender` 打开 54 格“大末影箱”**（插件存储） |
+| `isender`       | 单独使用时右键打开**该玩家自己的原版末影箱物品栏**；**若配置了 `open_name`（名字）则改为按名字共享的存储 `np_<名字>`（见下）**；与 `isbig:true` 同时写则是**插件存储的大末影箱**（同样支持按名字共享） |
+| `isshulkerbox`  | 打开 27 格界面；**单页时破坏后物品保留全部内容物数据**（写入返还物品），重新放置后内容还在 |
+| `multipages`    | 为 `true` 开启多页容器，见下 |
+| `pages`         | 多页页数（整数，配合 `multipages:true`），默认 1 |
 | `default_items` | 容器自带物品，使用原版 SNBT 书写（字符串数组），按顺序放入空格           |
-| `open_name`     | 打开界面的标题，使用原版文本组件 JSON 格式                     |
+| `open_name`     | 打开界面的标题，使用原版文本组件 JSON 格式；多页时自动追加“第 x/y 页”     |
 
-普通箱子 / 大箱子被破坏时，内容物会像原版一样掉落在地；潜影盒内容物写入返还物品、不掉落。
+普通箱子 / 大箱子 / **大末影箱**被破坏时，内容物会像原版一样掉落在地；**单页**潜影盒内容物写入返还物品、不掉落。
+
+### 多页容器（multipages）
+
+普通箱子、大箱子、潜影盒、大末影箱都可以多页：设置 `"multipages": true` 与 `"pages": <页数>` 后，每个页面的**最左下角是“上一页”、最右下角是“下一页”**（箭头按钮，点击翻页，无法被取走；首/末页为灰色占位）。
+
+```
+"data": {
+  "chest_menu": {
+    "ischest": true,
+    "isbig": true,
+    "multipages": true,
+    "pages": 3,
+    "open_name": { "text": "多页仓库", "color": "aqua" }
+  }
+}
+```
+
+* 多页内容全部由插件持久化到 `blocks_index.json`（按页、槽位顺序），重启后恢复。
+* 多页潜影盒因为内容可能超过单格潜影盒容量，破坏时改为像箱子一样把内容物掉落在地（并返还载体物品），而不是写入物品。
+* 原版玩家个人末影箱（`isender` 单独、不带 `isbig`）不支持多页（它是玩家原版背包，不受插件存储）。
+
+### 大末影箱（isender + isbig）
+
+`"isender": true` 与 `"isbig": true` 同时写时，得到一个由**插件存储的 54 格大末影箱**：默认内容保存在方块位置上（不是玩家个人末影箱，所有玩家打开看到的是同一份），可正常分页、设置自带物品与标题，破坏时内容物掉出。**若配置了 `open_name`（名字），则改为按名字共享的存储（见下一节），破坏后内容保留、不掉落。**
+
+### 按名字共享的末影箱（np_<名字>）
+
+当 `isender`（含 `isbig`）配置了 `open_name`（名字），该末影箱不再按玩家 / 方块位置独立存储，而是使用**以名字标识的全局共享存储**：
+
+- 存储文件：`plugins/SSCustomItems/ender_storage/np_<名字>.json`
+  （`np_` 前缀表示这是网络/插件共享存储，区别于玩家单人末影箱数据；空白转下划线，`\ / : * ? " < > |` 等非法字符转下划线，中文等 Unicode 字母数字原样保留）。
+- **任何玩家**放下 / 打开**相同名字**的自定义末影箱，都读写同一份文件、看到同一份内容。
+- 可配合 `isbig`（54 格）与 `multipages`/`pages`（多页）使用；内容按存储槽顺序持久化。
+- 破坏该方块时**只返还载体物品，内容不掉落**（内容保存在 `np_` 文件中，其他位置或再次放置仍可访问）。
+
+示例：
+
+```json
+"data": {
+  "chest_menu": {
+    "isender": true,
+    "isbig": true,
+    "open_name": { "text": "公共金库", "color": "dark_purple" }
+  }
+}
+```
+
+上述方块会使用 `ender_storage/np_公共金库.json`；希望纯英文文件名时在 `open_name` 中写英文即可。
+
 
 ### 门锁（门）
 
@@ -455,10 +560,10 @@ JSON 本身无法区分 byte /short/int/float/double，插件按以下规则转�
 
 ## 安装与构建
 
-把构建好的 `SSCustomItems-2.1.6.jar` 放入服务端 `plugins/` 目录，重启即可。
+把构建好的 `SSCustomItems-2.3.0.jar` 放入服务端 `plugins/` 目录，重启即可。
 
 首次启动会自动生成：`items/ruby.json` 示例物品、`damage_types/example.json` 示例伤害类型、
-`blocks/example_chest.json` 与 `blocks/example_shulker.json` 示例方块、`config.yml`，
+`blocks/example_chest.json`、`blocks/example_shulker.json`、`blocks/example_big_ender.json`（大末影箱）、`blocks/example_pages_chest.json`（多页仓库）等示例方块、`config.yml`，
 以及 `resourcepack/` 示例资源目录（供 ComponentsAPI 合并托管，见上）。
 
 > 注意：建议通过完整重启加载 / 更新插件。PlugManX 等热加载工具对新版 Paper 的类加载支持不完整，可能出现 onEnable 失败或指令异常。
@@ -469,4 +574,41 @@ JSON 本身无法区分 byte /short/int/float/double，插件按以下规则转�
 mvn package
 ```
 
-产物在 `target/SSCustomItems-2.1.6.jar`。
+产物在 `target/SSCustomItems-2.3.0.jar`。
+
+## 使用豆包进行许愿式编程
+
+本项目（SSCustomItems + ComponentsAPI）的全部代码均通过**豆包（Doubao）AI 助手以"许愿式编程"方式开发**：开发者用自然语言描述需求（"许愿"），AI 负责实现、编译、调试、文档与发布。
+
+### 什么是许愿式编程
+
+不手写代码，而是用自然语言向 AI 描述：
+
+- 想要什么功能（"加一个 /damagelook 指令，精准伤害视角所指实体"）
+- 具体规则（"低等级剑打高等级护甲，每低一级降 20% 伤害"）
+- 格式与约束（"JSON 格式，读取 plugins/SSCustomItems/items/ 下的文件"）
+
+AI 负责：代码编写、编译验证、错误修复、文档撰写、Git 提交、GitHub 发布。
+
+### 高效许愿的技巧
+
+1. **一次只许一个愿**：每个需求聚焦一个功能点，避免 AI 上下文过载。
+2. **给出精确格式**：涉及 JSON、SNBT、指令格式时直接写出示例，AI 照做的准确率远高于口头描述。
+3. **指定版本与环境**：明确 Paper 版本、JDK 版本、依赖版本，避免 AI 用过时 API。
+4. **要求编译验证**：每次实现后要求 AI 实际运行构建命令，不要只看代码。
+5. **迭代修正**：AI 第一次实现可能有偏差，用"改成 X""Y 不对，应该是 Z"逐步修正，比一次性描述所有细节更高效。
+6. **保留交接文档**：长项目中 AI 会丢失上下文，要求 AI 维护 HANDOFF.md / output.md，记录已完成功能、已知坑、环境路径，新会话先读文档再继续。
+
+### 许愿式编程的局限与缓解
+
+| 问题 | 缓解方式 |
+|------|---------|
+| AI 幻觉不存在的 API | 要求 AI 用 javap / 实际编译验证，不信口头承诺 |
+| 上下文丢失导致重复劳动 | 维护 HANDOFF.md，每次会话开始先读取 |
+| 编译通过但运行时崩溃 | 要求 AI 写明"仅编译通过、未运行时实测"，诚实标注 |
+| AI 擅自扩展范围 | 明确"只改 X，不动 Y"，验收时核对 diff |
+| 二进制/大文件推送失败 | 用 Git + 凭据管理器推送，MCP 文本通道只适合源码 |
+
+### 本项目的许愿记录
+
+本仓库 `docs/output.md` 整理了开发者历次原始许愿（需求提示词），按版本归档，可作为许愿式编程的完整案例参考。

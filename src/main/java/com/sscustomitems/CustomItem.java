@@ -22,15 +22,18 @@ public final class CustomItem {
     private final boolean enableModel;
     private final JsonObject components;
     private final ActionBindings actions;
+    private final RandomItemSpec random;
 
     public CustomItem(String sourceFile, String vanillaId, String id,
-                      boolean enableModel, JsonObject components, ActionBindings actions) {
+                      boolean enableModel, JsonObject components, ActionBindings actions,
+                      RandomItemSpec random) {
         this.sourceFile = Objects.requireNonNull(sourceFile, "sourceFile");
         this.vanillaId = Objects.requireNonNull(vanillaId, "vanillaId");
         this.id = Objects.requireNonNull(id, "id");
         this.enableModel = enableModel;
         this.components = components != null ? components : new JsonObject();
         this.actions = actions != null ? actions : new ActionBindings();
+        this.random = random;
     }
 
     public String sourceFile() {
@@ -55,5 +58,10 @@ public final class CustomItem {
 
     public ActionBindings actions() {
         return actions;
+    }
+
+    /** random 配置（随机变体 + 随机数占位符），无则为 null。 */
+    public RandomItemSpec random() {
+        return random;
     }
 }

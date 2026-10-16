@@ -236,6 +236,7 @@ public final class SuggestionTooltips implements Listener {
             case BIG_CHEST -> "大箱子（54 格）";
             case SHULKER -> "潜影盒（内容随物品保留）";
             case ENDER -> "末影箱（玩家个人）";
+            case BIG_ENDER -> "大末影箱（54 格，插件存储）";
         };
     }
 

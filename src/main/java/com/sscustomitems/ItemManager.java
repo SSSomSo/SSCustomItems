@@ -1,5 +1,6 @@
 package com.sscustomitems;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.bukkit.Material;
@@ -91,6 +92,10 @@ public final class ItemManager {
                     ? json.getAsJsonObject("components")
                     : new JsonObject();
             ActionBindings actions = ActionBindings.parse(json);
+            // random 配置（可替代 components）：随机变体 + 随机数占位符
+            RandomItemSpec random = json.has("random")
+                    ? RandomItemSpec.parse(json.get("random"))
+                    : null;
 
             String fullVanillaId = vanillaId.contains(":") ? vanillaId : "minecraft:" + vanillaId;
             String fullId = id.toLowerCase(Locale.ROOT);
@@ -100,7 +105,7 @@ public final class ItemManager {
             }
 
             CustomItem item = new CustomItem(fileName, fullVanillaId, fullId,
-                    enableModel, components, actions);
+                    enableModel, components, actions, random);
             CustomItem old = items.put(fullId, item);
             if (old != null) {
                 plugin.getLogger().warning("物品 id " + fullId + " 重复，"
@@ -122,6 +127,10 @@ public final class ItemManager {
         }
 
         JsonObject components = item.components().deepCopy();
+        // random：随机选变体（或用顶层 components）并替换 <random_xxx> 占位符
+        if (item.random() != null) {
+            components = item.random().roll(components, new java.util.Random());
+        }
         if (item.enableModel() && !hasComponent(components, "item_model")) {
             components.addProperty("minecraft:item_model", item.id());
         }
@@ -157,6 +166,63 @@ public final class ItemManager {
 
     public CustomItem getItem(String id) {
         return items.get(id.toLowerCase(Locale.ROOT));
+    }
+
+    private static final com.google.gson.Gson PRETTY_GSON =
+            new com.google.gson.GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
+
+    /**
+     * 把玩家手中的物品快速保存为 SSCI 自定义物品 JSON（/ssci save 使用）。
+     *
+     * @param hand     手中的 Bukkit 物品
+     * @param id       自定义物品 id（namespace:name）
+     * @param fileName 目标文件名（可带/不带 .json，自动清洗非法字符）
+     * @return 写入的文件路径
+     */
+    public Path saveHandItem(ItemStack hand, String id, String fileName) throws Exception {
+        if (hand == null || hand.getType().isAir()) {
+            throw new IllegalArgumentException("主手没有物品，无法保存。");
+        }
+        if (nmsBridge == null) {
+            throw new IllegalStateException("NMS 桥接未初始化，无法读取物品组件。");
+        }
+        String fullId = id.toLowerCase(Locale.ROOT);
+        if (!fullId.contains(":")) {
+            throw new IllegalArgumentException("物品 id 必须包含命名空间，形如 namespace:name");
+        }
+
+        // 读取物品完整 SNBT 并还原为 JSON，取出 components
+        String snbt = nmsBridge.toSnbt(hand);
+        JsonObject root = SnbtToJson.parse(snbt).getAsJsonObject();
+
+        JsonObject out = new JsonObject();
+        out.addProperty("vanilla_id", hand.getType().getKey().toString());
+        out.addProperty("id", fullId);
+        JsonElement components = root.get("components");
+        if (components != null && components.isJsonObject()
+                && components.getAsJsonObject().size() > 0) {
+            out.add("components", components);
+        }
+
+        String safeName = sanitizeFileName(fileName);
+        Path target = itemsDir.resolve(safeName + ".json");
+        Files.writeString(target, PRETTY_GSON.toJson(out) + System.lineSeparator(),
+                StandardCharsets.UTF_8);
+        return target;
+    }
+
+    /** 清洗文件名：去掉路径分隔符与 Windows 非法字符，统一补 .json。 */
+    private static String sanitizeFileName(String name) {
+        String n = name.trim();
+        if (n.toLowerCase(Locale.ROOT).endsWith(".json")) {
+            n = n.substring(0, n.length() - 5);
+        }
+        n = n.replaceAll("[\\\\/:*?\"<>|]", "_");
+        n = n.replaceAll("\\s+", "_");
+        if (n.isBlank()) {
+            throw new IllegalArgumentException("文件名无效");
+        }
+        return n;
     }
 
     /** 把自定义物品 id 写入物品的 PDC（存储在 custom_data 中），用于触发检测识别。 */

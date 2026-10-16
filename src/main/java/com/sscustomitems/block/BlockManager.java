@@ -71,7 +71,10 @@ public final class BlockManager implements Listener {
 
     private final Map<String, CustomBlock> definitions = new LinkedHashMap<>();
     private final Map<String, StoredBlock> index = new LinkedHashMap<>();
-    private final Map<String, Inventory> menus = new LinkedHashMap<>();
+    private final Map<String, BlockMenu> menus = new LinkedHashMap<>();
+    /** 按名字共享的末影箱（key=np_<名字>），跨所有位置共享同一份内容。 */
+    private final Map<String, BlockMenu> sharedMenus = new LinkedHashMap<>();
+    private final SharedEnderStore sharedStore;
 
     private NmsBridge nms;
     private BukkitTask tickTask;
@@ -82,6 +85,7 @@ public final class BlockManager implements Listener {
         this.itemManager = itemManager;
         this.directory = plugin.getDataFolder().toPath().resolve("blocks");
         this.indexFile = plugin.getDataFolder().toPath().resolve("blocks_index.json");
+        this.sharedStore = new SharedEnderStore(plugin.getDataFolder().toPath());
     }
 
     public void init() throws IOException {
@@ -101,13 +105,25 @@ public final class BlockManager implements Listener {
      * 再重新加载定义、按索引重建菜单。
      */
     public synchronized void reloadDefinitions() {
-        for (Map.Entry<String, Inventory> entry : menus.entrySet()) {
+        for (Map.Entry<String, BlockMenu> entry : menus.entrySet()) {
             persistMenu(entry.getKey());
-            for (org.bukkit.entity.HumanEntity viewer : entry.getValue().getViewers()) {
-                viewer.closeInventory();
+            for (Inventory page : entry.getValue().pages()) {
+                for (org.bukkit.entity.HumanEntity viewer : new ArrayList<>(page.getViewers())) {
+                    viewer.closeInventory();
+                }
             }
         }
         menus.clear();
+        // 共享末影箱：写 np_ 文件、关闭查看者、清空缓存（下次打开按新 spec 重建并从文件加载）
+        for (Map.Entry<String, BlockMenu> entry : sharedMenus.entrySet()) {
+            saveShared(entry.getKey(), entry.getValue());
+            for (Inventory page : entry.getValue().pages()) {
+                for (org.bukkit.entity.HumanEntity viewer : new ArrayList<>(page.getViewers())) {
+                    viewer.closeInventory();
+                }
+            }
+        }
+        sharedMenus.clear();
         loadDefinitions();
         validateAndRebuild();
     }
@@ -190,39 +206,63 @@ public final class BlockManager implements Listener {
     }
 
     private MenuSpec parseMenu(JsonObject chestMenu) {
+        boolean isEnder = chestMenu.has("isender") && chestMenu.get("isender").getAsBoolean();
+        boolean isBig = chestMenu.has("isbig") && chestMenu.get("isbig").getAsBoolean();
+        boolean isShulker = chestMenu.has("isshulkerbox") && chestMenu.get("isshulkerbox").getAsBoolean();
+        boolean isChest = chestMenu.has("ischest") && chestMenu.get("ischest").getAsBoolean();
+
         MenuSpec.Mode mode;
-        if (chestMenu.has("isender") && chestMenu.get("isender").getAsBoolean()) {
+        if (isEnder && isBig) {
+            // 大末影箱：插件存储的 54 格库存
+            mode = MenuSpec.Mode.BIG_ENDER;
+        } else if (isEnder) {
+            // 原版玩家末影箱
             mode = MenuSpec.Mode.ENDER;
-        } else if (chestMenu.has("isshulkerbox") && chestMenu.get("isshulkerbox").getAsBoolean()) {
+        } else if (isShulker) {
             mode = MenuSpec.Mode.SHULKER;
-        } else if (chestMenu.has("ischest") && chestMenu.get("ischest").getAsBoolean()) {
-            boolean big = chestMenu.has("isbig") && chestMenu.get("isbig").getAsBoolean();
-            mode = big ? MenuSpec.Mode.BIG_CHEST : MenuSpec.Mode.CHEST;
+        } else if (isChest) {
+            mode = isBig ? MenuSpec.Mode.BIG_CHEST : MenuSpec.Mode.CHEST;
         } else {
             // 写了 chest_menu 但没指定类型，按普通箱子处理
             mode = MenuSpec.Mode.CHEST;
         }
 
-        List<String> defaultItems = new ArrayList<>();
+        // 多页：仅对插件托管库存生效；原版末影箱忽略
+        boolean multipages = mode != MenuSpec.Mode.ENDER
+                && chestMenu.has("multipages")
+                && chestMenu.get("multipages").getAsBoolean();
+        int pageCount = chestMenu.has("pages")
+                && chestMenu.get("pages").isJsonPrimitive()
+                ? Math.max(1, chestMenu.get("pages").getAsInt())
+                : 1;
+
+        List<String> defaultItemSnbt = new ArrayList<>();
         if (chestMenu.has("default_items") && chestMenu.get("default_items").isJsonArray()) {
             for (JsonElement element : chestMenu.getAsJsonArray("default_items")) {
                 if (element.isJsonPrimitive()) {
-                    defaultItems.add(element.getAsString());
+                    defaultItemSnbt.add(element.getAsString());
                 }
             }
         }
 
         Component openName = null;
+        String storageName = null;
         if (chestMenu.has("open_name")) {
             JsonElement nameElement = chestMenu.get("open_name");
             if (nameElement.isJsonObject()) {
                 openName = GsonComponentSerializer.gson().deserialize(nameElement.toString());
+                JsonObject nameObj = nameElement.getAsJsonObject();
+                if (nameObj.has("text") && nameObj.get("text").isJsonPrimitive()) {
+                    storageName = nameObj.get("text").getAsString();
+                }
             } else if (nameElement.isJsonPrimitive()) {
-                openName = Component.text(nameElement.getAsString());
+                String plain = nameElement.getAsString();
+                openName = Component.text(plain);
+                storageName = plain;
             }
         }
 
-        return new MenuSpec(mode, defaultItems, openName);
+        return new MenuSpec(mode, multipages, pageCount, defaultItemSnbt, openName, storageName);
     }
 
     // ---------------------------------------------------------------- 位置索引
@@ -293,19 +333,10 @@ public final class BlockManager implements Listener {
                     continue;
                 }
             }
-            if (def.menu() != null && def.menu().mode() != MenuSpec.Mode.ENDER) {
-                Inventory inventory = createInventory(def);
-                int slot = 0;
-                for (String itemSnbt : stored.items()) {
-                    ItemStack restored = nms.fromSnbt(itemSnbt);
-                    while (slot < inventory.getSize() && inventory.getItem(slot) != null) {
-                        slot++;
-                    }
-                    if (slot < inventory.getSize()) {
-                        inventory.setItem(slot, restored);
-                    }
-                }
-                menus.put(key, inventory);
+            if (def.menu() != null && def.menu().persistentInventory()) {
+                BlockMenu menu = createMenu(key, def);
+                fillMenu(menu, stored.items());
+                menus.put(key, menu);
             }
         }
         for (String key : invalid) {
@@ -331,8 +362,8 @@ public final class BlockManager implements Listener {
             String key = key(target);
             index.put(key, new StoredBlock(def.id(), new ArrayList<>()));
 
-            if (def.menu() != null && def.menu().mode() != MenuSpec.Mode.ENDER) {
-                menus.put(key, createInventory(def));
+            if (def.menu() != null && def.menu().persistentInventory()) {
+                menus.put(key, createMenu(key, def));
             }
         }
 
@@ -385,34 +416,42 @@ public final class BlockManager implements Listener {
             return;
         }
         Material material = materialFor(def.vanillaId());
-        String key = key(block);
+        org.bukkit.Location dropAt = block.getLocation().add(0.5, 0.5, 0.5);
         MenuSpec menu = def.menu();
-
-        if (menu != null && menu.mode() == MenuSpec.Mode.SHULKER) {
-            // 潜影盒：内容物写入物品，整体返还一个
-            ItemStack drop = taggedItem(def);
-            Inventory inventory = menus.get(key);
-            if (inventory != null) {
-                drop = nms.withContainerContents(drop, nonNullContents(inventory));
+        // 共享末影箱（np_<名字>）：只返还载体物品，内容保留在 np_ 文件，不掉落
+        if (sharedEnderKey(menu) != null) {
+            if (material != null && material.isItem()) {
+                block.getWorld().dropItemNaturally(dropAt, taggedItem(def));
             }
-            block.getWorld().dropItemNaturally(block.getLocation().add(0.5, 0.5, 0.5), drop);
+            return;
+        }
+        BlockMenu blockMenu = menus.get(key(block));
+
+        if (menu != null && menu.persistentInventory()) {
+            // 单页潜影盒：内容物写入物品，整体返还一个
+            if (menu.mode() == MenuSpec.Mode.SHULKER && menu.effectivePages() == 1) {
+                ItemStack drop = taggedItem(def);
+                if (blockMenu != null) {
+                    drop = nms.withContainerContents(drop, blockMenu.storedContents());
+                }
+                block.getWorld().dropItemNaturally(dropAt, drop);
+                return;
+            }
+            // 普通箱子 / 大箱子 / 大末影箱 / 多页潜影盒：返还载体物品，内容物全部掉出
+            if (material != null && material.isItem()) {
+                block.getWorld().dropItemNaturally(dropAt, taggedItem(def));
+            }
+            if (blockMenu != null) {
+                for (ItemStack item : blockMenu.storedContents()) {
+                    block.getWorld().dropItemNaturally(dropAt, item);
+                }
+            }
             return;
         }
 
-        // 其他类型：返还载体物品（前提是原版存在手持形式）
+        // 无菜单方块（含原版玩家末影箱）：返还载体物品（前提是原版存在手持形式）
         if (material != null && material.isItem()) {
-            block.getWorld().dropItemNaturally(block.getLocation().add(0.5, 0.5, 0.5),
-                    taggedItem(def));
-        }
-
-        // 普通箱子/大箱子：内容物直接掉出
-        if (menu != null && (menu.mode() == MenuSpec.Mode.CHEST || menu.mode() == MenuSpec.Mode.BIG_CHEST)) {
-            Inventory inventory = menus.get(key);
-            if (inventory != null) {
-                for (ItemStack item : nonNullContents(inventory)) {
-                    block.getWorld().dropItemNaturally(block.getLocation().add(0.5, 0.5, 0.5), item);
-                }
-            }
+            block.getWorld().dropItemNaturally(dropAt, taggedItem(def));
         }
     }
 
@@ -630,10 +669,46 @@ public final class BlockManager implements Listener {
 
     @EventHandler
     public void onInventoryClose(InventoryCloseEvent event) {
-        for (Map.Entry<String, Inventory> entry : menus.entrySet()) {
-            if (entry.getValue().equals(event.getInventory())) {
-                persistMenu(entry.getKey());
-                return;
+        if (event.getInventory().getHolder() instanceof MenuPageHolder holder) {
+            String mk = holder.menu().key();
+            if (mk.startsWith("np_")) {
+                saveShared(mk, holder.menu());
+            } else {
+                persistMenu(mk);
+            }
+        }
+    }
+
+    /**
+     * 多页导航：点击最左下角翻到上一页，最右下角翻到下一页；
+     * 导航槽点击一律取消，按钮不会被取走。
+     */
+    @EventHandler
+    public void onInventoryClick(org.bukkit.event.inventory.InventoryClickEvent event) {
+        if (!(event.getView().getTopInventory().getHolder()
+                instanceof MenuPageHolder holder)) {
+            return;
+        }
+        BlockMenu menu = holder.menu();
+        MenuSpec spec = menu.spec();
+        if (!spec.multipages()) {
+            return;
+        }
+        Inventory top = event.getView().getTopInventory();
+        int raw = event.getRawSlot();
+        if (raw < 0 || raw >= top.getSize()) {
+            return; // 点击的是玩家自己的背包，放行
+        }
+        if (raw == spec.prevSlot()) {
+            event.setCancelled(true);
+            if (holder.page() > 0 && event.getWhoClicked() instanceof Player player) {
+                player.openInventory(menu.pages().get(holder.page() - 1));
+            }
+        } else if (raw == spec.nextSlot()) {
+            event.setCancelled(true);
+            if (holder.page() < menu.pageCount() - 1
+                    && event.getWhoClicked() instanceof Player player) {
+                player.openInventory(menu.pages().get(holder.page() + 1));
             }
         }
     }
@@ -713,45 +788,181 @@ public final class BlockManager implements Listener {
 
     private void openMenu(Player player, Block block, CustomBlock def) {
         MenuSpec menu = def.menu();
+        String sharedKey = sharedEnderKey(menu);
+        if (sharedKey != null) {
+            // 按名字共享的末影箱（np_<名字>），所有该名字的位置打开同一份
+            BlockMenu sm = sharedMenus.get(sharedKey);
+            if (sm == null) {
+                sm = createSharedMenu(sharedKey, menu);
+                sharedMenus.put(sharedKey, sm);
+            }
+            player.openInventory(sm.firstPage());
+            return;
+        }
         if (menu.mode() == MenuSpec.Mode.ENDER) {
+            // 原版玩家末影箱（打开玩家个人末影箱，无插件存储）
             player.openInventory(player.getEnderChest());
             return;
         }
         String key = key(block);
-        Inventory inventory = menus.get(key);
-        if (inventory == null) {
-            inventory = createInventory(def);
-            menus.put(key, inventory);
+        BlockMenu blockMenu = menus.get(key);
+        if (blockMenu == null) {
+            blockMenu = createMenu(key, def);
+            menus.put(key, blockMenu);
         }
-        player.openInventory(inventory);
+        player.openInventory(blockMenu.firstPage());
     }
 
-    private Inventory createInventory(CustomBlock def) {
-        MenuSpec menu = def.menu();
-        Component title = menu.openName() != null ? menu.openName() : Component.text(def.id());
-        Inventory inventory = Bukkit.createInventory(null, menu.mode().size(), title);
+    /** 创建按名字共享的末影箱菜单（从 np_<名字>.json 加载，跨位置共享）。 */
+    private BlockMenu createSharedMenu(String sharedKey, MenuSpec spec) {
+        int total = spec.effectivePages();
+        Component baseTitle = spec.openName();
 
-        int slot = 0;
-        for (String itemSnbt : menu.defaultItemSnbt()) {
-            ItemStack defaultItem = nms.fromSnbt(itemSnbt);
-            while (slot < inventory.getSize() && inventory.getItem(slot) != null) {
-                slot++;
-            }
-            if (slot < inventory.getSize()) {
-                inventory.setItem(slot++, defaultItem);
+        List<Inventory> inventories = new ArrayList<>();
+        BlockMenu blockMenu = new BlockMenu(sharedKey, spec, inventories);
+        for (int p = 0; p < total; p++) {
+            MenuPageHolder holder = new MenuPageHolder(blockMenu, p);
+            Component title = spec.multipages() && total > 1
+                    ? baseTitle.append(Component.text("  第 " + (p + 1) + "/" + total + " 页"))
+                    : baseTitle;
+            Inventory inv = Bukkit.createInventory(holder, spec.pageSize(), title);
+            holder.setInventory(inv);
+            inventories.add(inv);
+            if (spec.multipages()) {
+                placeNavButtons(inv, spec, p, total);
             }
         }
-        return inventory;
+        // 从 np_ 文件恢复内容（跨页、跳过导航槽）
+        fillMenu(blockMenu, sharedStore.load(sharedKey));
+        return blockMenu;
+    }
+
+    /** 保存共享末影箱到 np_<名字>.json。 */
+    private void saveShared(String sharedKey, BlockMenu menu) {
+        List<String> items = new ArrayList<>();
+        for (ItemStack item : menu.storedContents()) {
+            items.add(nms.toSnbt(item));
+        }
+        sharedStore.save(sharedKey, items);
+    }
+
+    /**
+     * 若该菜单是带名字（open_name）的末影箱，返回共享存储 key：np_<清洗名字>；
+     * 否则返回 null。只有 isender（含 isbig）且配置了 open_name 才按名字共享。
+     */
+    private String sharedEnderKey(MenuSpec spec) {
+        if (spec == null) return null;
+        if (spec.mode() != MenuSpec.Mode.ENDER && spec.mode() != MenuSpec.Mode.BIG_ENDER) {
+            return null;
+        }
+        // 共享存储名直接来自 open_name 的纯文本（parseMenu 时提取，不依赖 plaintext serializer）
+        String name = spec.storageName();
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        return "np_" + sanitize(name);
+    }
+
+    /** 清洗为安全的文件/标识名：空白转下划线，保留 Unicode 字母/数字（含中文），其余危险字符转下划线。 */
+    private static String sanitize(String raw) {
+        String n = raw.trim().replaceAll("\\s+", "_");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < n.length(); i++) {
+            char c = n.charAt(i);
+            if (Character.isLetterOrDigit(c) || c == '_' || c == '-' || c == '.') {
+                sb.append(c);
+            } else {
+                // 含 \ / : * ? " < > | 等 Windows 非法文件名字符
+                sb.append('_');
+            }
+        }
+        String result = sb.toString();
+        return result.isEmpty() ? "unnamed" : result;
+    }
+
+    /** 创建一个方块的多页菜单（含导航按钮与默认物品）。 */
+    private BlockMenu createMenu(String key, CustomBlock def) {
+        MenuSpec spec = def.menu();
+        int total = spec.effectivePages();
+        Component baseTitle = spec.openName() != null ? spec.openName() : Component.text(def.id());
+
+        List<Inventory> inventories = new ArrayList<>();
+        BlockMenu blockMenu = new BlockMenu(key, spec, inventories);
+        for (int p = 0; p < total; p++) {
+            MenuPageHolder holder = new MenuPageHolder(blockMenu, p);
+            Component title = spec.multipages() && total > 1
+                    ? baseTitle.append(Component.text("  第 " + (p + 1) + "/" + total + " 页"))
+                    : baseTitle;
+            Inventory inv = Bukkit.createInventory(holder, spec.pageSize(), title);
+            holder.setInventory(inv);
+            inventories.add(inv);
+            if (spec.multipages()) {
+                placeNavButtons(inv, spec, p, total);
+            }
+        }
+
+        // 默认物品跨页填入存储槽
+        List<ItemStack> defaults = new ArrayList<>();
+        for (String snbt : spec.defaultItemSnbt()) {
+            defaults.add(nms.fromSnbt(snbt));
+        }
+        fillMenuItems(blockMenu, defaults);
+        return blockMenu;
+    }
+
+    /** 放置“上一页/下一页”导航按钮（不可取走）。 */
+    private void placeNavButtons(Inventory inv, MenuSpec spec, int page, int total) {
+        ItemStack prev = page > 0
+                ? namedItem(Material.ARROW, "上一页")
+                : namedItem(Material.GRAY_STAINED_GLASS_PANE, " ");
+        ItemStack next = page < total - 1
+                ? namedItem(Material.ARROW, "下一页")
+                : namedItem(Material.GRAY_STAINED_GLASS_PANE, " ");
+        inv.setItem(spec.prevSlot(), prev);
+        inv.setItem(spec.nextSlot(), next);
+    }
+
+    private ItemStack namedItem(Material material, String name) {
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        meta.displayName(Component.text(name));
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    /** 把物品按存储槽顺序（跨页、跳过导航槽）填入菜单。 */
+    private void fillMenuItems(BlockMenu menu, List<ItemStack> items) {
+        List<int[]> slots = menu.storageSlots();
+        int idx = 0;
+        for (ItemStack item : items) {
+            if (item == null) {
+                continue;
+            }
+            if (idx >= slots.size()) {
+                break;
+            }
+            int[] loc = slots.get(idx++);
+            menu.pages().get(loc[0]).setItem(loc[1], item);
+        }
+    }
+
+    /** 从 SNBT 列表恢复菜单内容（跨页、跳过导航槽）。 */
+    private void fillMenu(BlockMenu menu, List<String> snbtItems) {
+        List<ItemStack> items = new ArrayList<>();
+        for (String snbt : snbtItems) {
+            items.add(nms.fromSnbt(snbt));
+        }
+        fillMenuItems(menu, items);
     }
 
     private void persistMenu(String key) {
         StoredBlock stored = index.get(key);
-        Inventory inventory = menus.get(key);
-        if (stored == null || inventory == null) {
+        BlockMenu menu = menus.get(key);
+        if (stored == null || menu == null) {
             return;
         }
         List<String> items = new ArrayList<>();
-        for (ItemStack item : nonNullContents(inventory)) {
+        for (ItemStack item : menu.storedContents()) {
             items.add(nms.toSnbt(item));
         }
         index.put(key, new StoredBlock(stored.id(), items));
@@ -821,6 +1032,13 @@ public final class BlockManager implements Listener {
     }
 
     public void stop() {
+        // 关闭前持久化所有托管菜单与共享末影箱（防止崩溃/关机时关闭事件未触发）
+        for (String key : new ArrayList<>(menus.keySet())) {
+            persistMenu(key);
+        }
+        for (Map.Entry<String, BlockMenu> entry : sharedMenus.entrySet()) {
+            saveShared(entry.getKey(), entry.getValue());
+        }
         if (tickTask != null) {
             tickTask.cancel();
             tickTask = null;
@@ -906,16 +1124,6 @@ public final class BlockManager implements Listener {
                 : vanillaId;
         Material material = Material.matchMaterial(path.toUpperCase(Locale.ROOT));
         return material != null && material.isBlock() ? material : null;
-    }
-
-    private static List<ItemStack> nonNullContents(Inventory inventory) {
-        List<ItemStack> items = new ArrayList<>();
-        for (ItemStack item : inventory.getContents()) {
-            if (item != null) {
-                items.add(item);
-            }
-        }
-        return items;
     }
 
     private static List<String> readStringList(JsonArray array) {
@@ -1028,6 +1236,52 @@ public final class BlockManager implements Listener {
                 Files.writeString(directory.resolve("example_shulker.json"), example, StandardCharsets.UTF_8);
             } catch (IOException e) {
                 plugin.getLogger().warning("无法生成示例潜影盒: " + e.getMessage());
+            }
+        }
+
+        if (!Files.exists(directory.resolve("example_big_ender.json"))) {
+            String example = """
+                    {
+                      "vanilla_id": "minecraft:ender_chest",
+                      "id": "sscustomitems:example_big_ender",
+                      "events": {},
+                      "data": {
+                        "chest_menu": {
+                          "isender": true,
+                          "isbig": true,
+                          "open_name": {"text": "大末影箱", "color": "dark_purple"}
+                        }
+                      }
+                    }
+                    """;
+            try {
+                Files.writeString(directory.resolve("example_big_ender.json"), example, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                plugin.getLogger().warning("无法生成示例大末影箱: " + e.getMessage());
+            }
+        }
+
+        if (!Files.exists(directory.resolve("example_pages_chest.json"))) {
+            String example = """
+                    {
+                      "vanilla_id": "minecraft:chest",
+                      "id": "sscustomitems:example_pages_chest",
+                      "events": {},
+                      "data": {
+                        "chest_menu": {
+                          "ischest": true,
+                          "isbig": true,
+                          "multipages": true,
+                          "pages": 3,
+                          "open_name": {"text": "多页仓库", "color": "aqua"}
+                        }
+                      }
+                    }
+                    """;
+            try {
+                Files.writeString(directory.resolve("example_pages_chest.json"), example, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                plugin.getLogger().warning("无法生成示例多页仓库: " + e.getMessage());
             }
         }
     }
