@@ -303,6 +303,15 @@
 
 > 另外 isender（包括 isbig）加入重命名成什么就使用哪个存储文件（开头要比玩家单人的存储多 np_），当任何玩家使用相同名字的自定义末影箱放下以后就会使用对应的存储文件。
 
+## 十一、ComponentsAPI 1.8.0：第一人称模拟切换关键帧过渡
+
+> 切换是否使用第一人称模拟时使用关键帧：
+> - 切入模拟原版手持（基岩→原版）时，先播放基岩模型的退场关键帧动画（`to_vanilla_animation`），
+>   动画结束后才交原版手持渲染；
+> - 切回基岩（原版→基岩）时，先恢复基岩渲染并播放进场关键帧动画（`to_bedrock_animation`）；
+> - 不写则回退 `switch.out` / `switch.in`，都没有则瞬间切换；
+> - 过渡期间强制，普通按键（lc/rc/mc/h 及再次按 fp）不能打断，仅切换物品、丢弃、死亡可打断。
+
 ## 附：版本演进对照
 
 | 版本 | 里程碑 |
@@ -323,6 +332,7 @@
 | SSCustomItems 2.2.0 | random 随机物品（变体 + `<random_###>` 占位符）、大末影箱（isender+isbig 插件存储）、箱子/潜影盒/末影箱多页（multipages/pages，左下=上一页、右下=下一页）、`/ssci save` 保存手中物品 |
 | ComponentsAPI 1.7.0 | 按键（默认 R 键）切换第一人称是否模拟原版手持（可压制其他按键动画）、index 按名字忽略不渲染骨骼组（含子层级）、动画强制播放（force，普通操作不可打断，仅切换物品/丢弃/死亡可打断） |
 | SSCustomItems 2.3.0 | isender（含 isbig）按 open_name 名字使用 `np_<名字>` 全局共享存储（ender_storage/），任何玩家同名字末影箱共享同一份，破坏只返还载体、内容保留 |
+| ComponentsAPI 1.8.0 | fp 切换第一人称模拟时播放关键帧过渡（`to_vanilla_animation` 退场 / `to_bedrock_animation` 进场），未配置则回退 switch.out/in，过渡期间强制不可打断 |
 
 ---
 
